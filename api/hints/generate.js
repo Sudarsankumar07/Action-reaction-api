@@ -6,14 +6,10 @@ import {
   saveToCache 
 } from '../../lib/groqClient.js';
 
-import { 
-  verifyAppSecret, 
-  verifySignature, 
-  isTimestampValid, 
-  checkDeviceLimit, 
-  checkRateLimit, 
-  validateInput 
-} from '../../lib/validation.js';
+// Rate limiting (in-memory, resets on cold start)
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX = 20; // 20 requests per minute per IP
 
 export default async function handler(req, res) {
   // Handle CORS preflight
@@ -31,82 +27,31 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ============ SECURITY LAYER 1: App Secret Verification ============
-    const appSecret = req.headers['x-app-secret'];
-    if (!verifyAppSecret(appSecret)) {
-      console.warn('Invalid app secret attempt from:', req.headers['x-forwarded-for']);
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        code: 'INVALID_APP_SECRET'
-      });
-    }
-
-    // ============ SECURITY LAYER 2: Request Signature Verification ============
-    const signature = req.headers['x-signature'];
-    const timestamp = req.headers['x-timestamp'];
-    
-    if (!signature || !timestamp) {
-      return res.status(401).json({
-        success: false,
-        error: 'Missing security headers',
-        code: 'MISSING_SIGNATURE'
-      });
-    }
-
-    // Check timestamp is within 5 minutes (prevents replay attacks)
-    if (!isTimestampValid(timestamp)) {
-      return res.status(401).json({
-        success: false,
-        error: 'Request expired',
-        code: 'EXPIRED_REQUEST'
-      });
-    }
-
-    // Verify signature
-    const { word, topic, difficulty = 'medium', language = 'en', deviceId } = req.body;
-    
-    if (!verifySignature(signature, word, topic, timestamp)) {
-      console.warn('Invalid signature attempt');
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid signature',
-        code: 'INVALID_SIGNATURE'
-      });
-    }
-
-    // ============ SECURITY LAYER 3: Device-based Daily Limit ============
-    if (deviceId) {
-      const deviceLimitResult = checkDeviceLimit(deviceId);
-      if (!deviceLimitResult.allowed) {
-        return res.status(429).json({
-          success: false,
-          error: 'Daily limit reached. Try again tomorrow.',
-          code: 'DAILY_LIMIT_EXCEEDED',
-          remainingTime: deviceLimitResult.remainingTime
-        });
-      }
-    }
-
-    // ============ SECURITY LAYER 4: IP Rate Limiting ============
+    // Rate limiting by IP
     const clientIP = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
     
-    const rateLimitResult = checkRateLimit(clientIP);
-    if (!rateLimitResult.allowed) {
-      return res.status(429).json({
-        success: false,
+    if (!rateLimitMap.has(clientIP)) {
+      rateLimitMap.set(clientIP, []);
+    }
+    const requests = rateLimitMap.get(clientIP).filter(t => t > now - RATE_LIMIT_WINDOW);
+    if (requests.length >= RATE_LIMIT_MAX) {
+      return res.status(429).json({ 
+        success: false, 
         error: 'Too many requests. Please wait a moment.',
-        code: 'RATE_LIMIT_EXCEEDED',
-        retryAfter: rateLimitResult.retryAfter
+        code: 'RATE_LIMIT_EXCEEDED'
       });
     }
+    requests.push(now);
+    rateLimitMap.set(clientIP, requests);
+
+    const { word, topic, difficulty = 'medium', language = 'en' } = req.body;
 
     // Validate inputs
-    const validationError = validateInput(word, topic, difficulty);
-    if (validationError) {
+    if (!word || !topic) {
       return res.status(400).json({
         success: false,
-        error: validationError,
+        error: 'Word and topic are required',
         code: 'VALIDATION_ERROR'
       });
     }
