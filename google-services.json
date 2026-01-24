@@ -1,0 +1,29 @@
+{
+    "project_info": {
+        "project_number": "1051165431470",
+        "project_id": "action-reaction-game",
+        "storage_bucket": "action-reaction-game.firebasestorage.app"
+    },
+    "client": [
+        {
+            "client_info": {
+                "mobilesdk_app_id": "1:1051165431470:android:be7459967a51fdeeb3bf3f",
+                "android_client_info": {
+                    "package_name": "com.actionreaction.app"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [
+                {
+                    "current_key": "AIzaSyAcPW_C5ML6K-I5d-yGErL2r2dUJRtV4cc"
+                }
+            ],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
+        }
+    ],
+    "configuration_version": "1"
+}

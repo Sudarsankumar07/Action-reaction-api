@@ -1,9 +1,9 @@
 // api/hints/generate.js
-import { 
-  generateHints, 
-  generateFallbackHints, 
-  getFromCache, 
-  saveToCache 
+import {
+  generateHints,
+  generateFallbackHints,
+  getFromCache,
+  saveToCache
 } from '../../lib/groqClient.js';
 
 // Rate limiting (in-memory, resets on cold start)
@@ -19,31 +19,42 @@ export default async function handler(req, res) {
 
   // Only allow POST requests
   if (req.method !== 'POST') {
-    return res.status(405).json({ 
-      success: false, 
+    return res.status(405).json({
+      success: false,
       error: 'Method not allowed',
       code: 'METHOD_NOT_ALLOWED'
     });
   }
 
   try {
-    // Rate limiting by IP
-    const clientIP = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-    const now = Date.now();
-    
-    if (!rateLimitMap.has(clientIP)) {
-      rateLimitMap.set(clientIP, []);
+    // ✅ STEP 1: Authenticate with Firebase JWT
+    const { authenticateRequest, sendAuthError } = await import('../../lib/authMiddleware.js');
+    const authResult = await authenticateRequest(req);
+
+    if (!authResult.authenticated) {
+      console.log(`❌ Authentication failed: ${authResult.error}`);
+      return sendAuthError(res, authResult);
     }
-    const requests = rateLimitMap.get(clientIP).filter(t => t > now - RATE_LIMIT_WINDOW);
+
+    const firebaseUID = authResult.uid;
+    console.log(`✅ Authenticated user: ${firebaseUID}`);
+
+    // STEP 2: Rate limiting by Firebase UID (instead of IP)
+    const now = Date.now();
+
+    if (!rateLimitMap.has(firebaseUID)) {
+      rateLimitMap.set(firebaseUID, []);
+    }
+    const requests = rateLimitMap.get(firebaseUID).filter(t => t > now - RATE_LIMIT_WINDOW);
     if (requests.length >= RATE_LIMIT_MAX) {
-      return res.status(429).json({ 
-        success: false, 
+      return res.status(429).json({
+        success: false,
         error: 'Too many requests. Please wait a moment.',
         code: 'RATE_LIMIT_EXCEEDED'
       });
     }
     requests.push(now);
-    rateLimitMap.set(clientIP, requests);
+    rateLimitMap.set(firebaseUID, requests);
 
     const { word, topic, difficulty = 'medium', language = 'en' } = req.body;
 
@@ -83,7 +94,7 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('API Error:', error.message);
-    
+
     // Return fallback hints on error
     const { word, topic } = req.body || {};
     if (word && topic) {
